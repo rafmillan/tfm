@@ -5,33 +5,11 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <time.h>
+#include "dir.h"
+#include "util.h"
 
 #define PATH_MAX    256
-#define NAME_W      32
-#define SIZE_W      8
-#define MODIFIED_W  24
-#define KIND_W      16
-
 #define PRIMARY_W   NAME_W + SIZE_W + MODIFIED_W + KIND_W
-
-typedef struct {
-    char name[NAME_W];
-    char size[SIZE_W];        // Formatted size (e.g., "1.2 MB")
-    char modified[MODIFIED_W];    // Last modified time (e.g., "Jan 10, 2023 12:30 PM")
-    char kind[KIND_W];        // File type (e.g., "Directory", "Text file", etc.)
-} FileInfo;
-
-typedef FileInfo* fileinfo_t;
-
-// Returns the minimum of two integers
-static inline int min(int a, int b) {
-    return a < b ? a : b;
-}
-
-// Returns the maximum of two integers
-static inline int max(int a, int b) {
-    return a > b ? a : b;
-}
 
 void ncurses_init(void)
 {
@@ -42,73 +20,72 @@ void ncurses_init(void)
     return;
 }
 
-FileInfo get_file_info(const char* path) {
+int get_file_info(File* info, const char* path) {
     struct stat file_stat;
-    FileInfo info = {"", "", "", ""};
     
     // Get file stats
     if (stat(path, &file_stat) != 0) {
         // Error getting file info
-        strncpy(info.size, "Error", sizeof(info.size) - 1);
-        strncpy(info.modified, "Error", sizeof(info.modified) - 1);
-        strncpy(info.kind, "Unknown", sizeof(info.kind) - 1);
-        return info;
+        strncpy(info->size, "Error", sizeof(info->size) - 1);
+        strncpy(info->modified, "Error", sizeof(info->modified) - 1);
+        strncpy(info->kind, "Unknown", sizeof(info->kind) - 1);
+        return 0;
     }
     
     // Get file size
     if (S_ISDIR(file_stat.st_mode)) {
-        strncpy(info.size, "--", sizeof(info.size) - 1);
+        strncpy(info->size, "--", sizeof(info->size) - 1);
     } else {
         // Format size
         if (file_stat.st_size < 1024) {
-            snprintf(info.size, sizeof(info.size), "%ld B", file_stat.st_size);
+            snprintf(info->size, sizeof(info->size), "%lld B", file_stat.st_size);
         } else if (file_stat.st_size < 1024 * 1024) {
-            snprintf(info.size, sizeof(info.size), "%.1f KB", file_stat.st_size / 1024.0);
+            snprintf(info->size, sizeof(info->size), "%.1f KB", file_stat.st_size / 1024.0);
         } else if (file_stat.st_size < 1024 * 1024 * 1024) {
-            snprintf(info.size, sizeof(info.size), "%.1f MB", file_stat.st_size / (1024.0 * 1024.0));
+            snprintf(info->size, sizeof(info->size), "%.1f MB", file_stat.st_size / (1024.0 * 1024.0));
         } else {
-            snprintf(info.size, sizeof(info.size), "%.1f GB", file_stat.st_size / (1024.0 * 1024.0 * 1024.0));
+            snprintf(info->size, sizeof(info->size), "%.1f GB", file_stat.st_size / (1024.0 * 1024.0 * 1024.0));
         }
     }
     
     // Get last modified time
     struct tm *timeinfo = localtime(&file_stat.st_mtime);
-    strftime(info.modified, sizeof(info.modified), "%b %d, %Y %I:%M %p", timeinfo);
+    strftime(info->modified, sizeof(info->modified), "%b %d, %Y %I:%M %p", timeinfo);
     
     // Get file type
     if (S_ISDIR(file_stat.st_mode)) {
-        strncpy(info.kind, "Directory", sizeof(info.kind) - 1);
+        strncpy(info->kind, "Directory", sizeof(info->kind) - 1);
     } else if (S_ISREG(file_stat.st_mode)) {
         // Try to determine file type by extension
         const char* ext = strrchr(path, '.');
         if (ext) {
             ext++; // Skip the dot
             if (strcasecmp(ext, "txt") == 0 || strcasecmp(ext, "md") == 0) {
-                strncpy(info.kind, "Text file", sizeof(info.kind) - 1);
+                strncpy(info->kind, "Text file", sizeof(info->kind) - 1);
             } else if (strcasecmp(ext, "c") == 0 || strcasecmp(ext, "h") == 0) {
-                strncpy(info.kind, "C source", sizeof(info.kind) - 1);
+                strncpy(info->kind, "C source", sizeof(info->kind) - 1);
             } else if (strcasecmp(ext, "jpg") == 0 || strcasecmp(ext, "png") == 0 || 
                       strcasecmp(ext, "gif") == 0 || strcasecmp(ext, "bmp") == 0) {
-                strncpy(info.kind, "Image", sizeof(info.kind) - 1);
+                strncpy(info->kind, "Image", sizeof(info->kind) - 1);
             } else if (strcasecmp(ext, "mp3") == 0 || strcasecmp(ext, "wav") == 0 || 
                       strcasecmp(ext, "ogg") == 0 || strcasecmp(ext, "flac") == 0) {
-                strncpy(info.kind, "Audio", sizeof(info.kind) - 1);
+                strncpy(info->kind, "Audio", sizeof(info->kind) - 1);
             } else {
-                strncpy(info.kind, ext, sizeof(info.kind) - 1);
+                strncpy(info->kind, ext, sizeof(info->kind) - 1);
             }
         } else {
-            strncpy(info.kind, "File", sizeof(info.kind) - 1);
+            strncpy(info->kind, "File", sizeof(info->kind) - 1);
         }
     } else if (S_ISLNK(file_stat.st_mode)) {
-        strncpy(info.kind, "Symlink", sizeof(info.kind) - 1);
+        strncpy(info->kind, "Symlink", sizeof(info->kind) - 1);
     } else {
-        strncpy(info.kind, "Special", sizeof(info.kind) - 1);
+        strncpy(info->kind, "Special", sizeof(info->kind) - 1);
     }
     
-    return info;
+    return 0;
 }
 
-void display_footer(WINDOW* win, int y, int x)
+void display_footer(int y, int x)
 {
     wattron(stdscr, A_REVERSE);
     mvwprintw(stdscr, y, x, "%s", " ENTER ");
@@ -187,7 +164,7 @@ void list_directory(WINDOW* win, const char* path, int* sel, int* file_count)
     // Second pass to display with selection
     for (int i = 0; i < *file_count; i++) {
         char full_path[PATH_MAX];
-        FileInfo fi;
+        File fi = {"", "", "", ""};
         
         if (i == 0) {
             // Parent directory
@@ -205,7 +182,6 @@ void list_directory(WINDOW* win, const char* path, int* sel, int* file_count)
                     full_path[1] = '\0';
                 }
             }
-            fi = get_file_info(full_path);
         } else {
             // Regular file or directory
             if (path[strlen(path) - 1] == '/') {
@@ -213,9 +189,9 @@ void list_directory(WINDOW* win, const char* path, int* sel, int* file_count)
             } else {
                 snprintf(full_path, PATH_MAX, "%s/%s", path, filenames[i]);
             }
-            fi = get_file_info(full_path);
         }
-
+        
+        get_file_info(&fi, full_path);
         strncpy(fi.name, filenames[i], min((int)NAME_W - 1, (int)strlen(filenames[i])));
         fi.name[min(NAME_W - 1, strlen(filenames[i]))] = '\0'; // Ensure null termination
 
@@ -239,7 +215,7 @@ void list_directory(WINDOW* win, const char* path, int* sel, int* file_count)
     closedir(dir);
 }
 
-void change_directory(WINDOW* win, char* path, int* sel)
+void change_directory(char* path, int* sel)
 {
     // Special case for parent directory (..)
     if (*sel == 0) {
@@ -291,42 +267,44 @@ void change_directory(WINDOW* win, char* path, int* sel)
     closedir(dir);
 }
 
-
-
 int main() {
     int max_y, max_x;
-    const char* home = getenv("HOME");
+    int win_height, win_width;
+    int win_start_y, win_start_x;
+    int running;
+
     char current_path[PATH_MAX];
+    const char* home;
+
+    WINDOW* win;
+    
+    home = getenv("HOME");
     strncpy(current_path, home, PATH_MAX - 1);
     current_path[PATH_MAX - 1] = '\0';
 
-    WINDOW* win;
     ncurses_init();
     getmaxyx(stdscr, max_y, max_x);
 
-    int win_height = max_y - 5;
-    int win_width = max_x - 5;
-    int win_start_y = (max_y - win_height) / 2;  // Center vertically
-    int win_start_x = (max_x - win_width) / 2;   // Center horizontally
-
+    win_height = max_y - 5;
+    win_width = max_x - 5;
+    win_start_y = (max_y - win_height) / 2;  // Center vertically
+    win_start_x = (max_x - win_width) / 2;   // Center horizontally
     win = newwin(win_height, win_width, win_start_y, win_start_x);
     keypad(win, TRUE); // Enable keypad for the window
     box(win, 0, 0);
 
 
-    int running = 1;
-    
+    running = 1;
     int sel = 0;
     int fc = 0;
     unsigned int ch;
 
     list_directory(win, current_path, &sel, &fc);
-    display_footer(stdscr, max_y - 1, 2);
+    display_footer(max_y - 1, 2);
     wrefresh(win);
-
+    
     while(running) {
         ch = wgetch(win);
-
         switch (ch) {
             case KEY_UP:
                 if (sel > 0)
@@ -345,7 +323,7 @@ int main() {
                 break;
             
             case 10:
-                change_directory(win, current_path, &sel);
+                change_directory(current_path, &sel);
                 break;
         }
 

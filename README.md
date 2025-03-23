@@ -72,4 +72,3 @@ Unicode/internationalization support
 Unit tests for file operations
 Integration tests for UI functionality
 Edge case testing (permissions, special files)
-# tfm

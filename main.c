@@ -20,6 +20,8 @@ void ncurses_init(void)
     return;
 }
 
+int scroll_offset = 0;
+
 int get_file_info(File* info, const char* path) {
     struct stat file_stat;
     
@@ -136,9 +138,6 @@ void list_directory(WINDOW* win, const char* path, int* sel, int* file_count)
     if (*sel < 0) {
         *sel = 0;
     }
-    
-    int win_width, win_height;
-    getmaxyx(win, win_height, win_width);
 
     int x = 2;
     int y = 0;
@@ -151,6 +150,9 @@ void list_directory(WINDOW* win, const char* path, int* sel, int* file_count)
     int kind_width = KIND_W;
     int modified_width = MODIFIED_W;
 
+    int win_y, win_x;
+    getmaxyx(win, win_y, win_x);
+
     // Display column headers
     wattron(win, A_BOLD);
     mvwprintw(win, y, x, "%-*s %-*s %-*s %-*s", 
@@ -161,11 +163,59 @@ void list_directory(WINDOW* win, const char* path, int* sel, int* file_count)
     wattroff(win, A_BOLD);
     y++;
 
-    // Second pass to display with selection
-    for (int i = 0; i < *file_count; i++) {
+    // Calculate available rows for files (subtract header rows, border, etc.)
+    int available_rows = win_y - y - 1; // Ensure space for bottom border
+
+    // Check if we need indicators
+    int needs_top_indicator = 0;
+    int needs_bottom_indicator = 0;
+    
+    // Adjust scroll offset if selected item is out of view
+    if (*sel < scroll_offset) {
+        scroll_offset = *sel;
+    } else if (*sel >= scroll_offset + available_rows - 1) {
+        scroll_offset = *sel - available_rows + 1;
+    }
+
+    // Ensure scroll offset is within valid range
+    if (scroll_offset < 0) {
+        scroll_offset = 0;
+    } else if (scroll_offset > *file_count - available_rows) {
+        if (*file_count > available_rows) {
+            scroll_offset = *file_count - available_rows;
+        } else {
+            scroll_offset = 0;
+        }
+    }
+
+    // Determine if we need indicators
+    needs_top_indicator = (scroll_offset > 0);
+    needs_bottom_indicator = (*file_count > scroll_offset + available_rows);
+
+    // If both indicators are needed, reduce available rows by 2
+    if (needs_top_indicator && needs_bottom_indicator) {
+        available_rows -= 2;
+    }
+    // If only one indicator is needed, reduce available rows by 1
+    else if (needs_top_indicator || needs_bottom_indicator) {
+        available_rows -= 1;
+    }
+
+    // Display top scroll indicator if needed (before any file listing)
+    if (needs_top_indicator) {
+        wattron(win, A_BOLD);
+        mvwprintw(win, y, x, "%-*s", PRIMARY_W, "More...");
+        wattroff(win, A_BOLD);
+        y++;
+    }
+
+    // Second pass to display files with scrolling
+    int displayed = 0;
+
+    for (int i = scroll_offset; i < *file_count && displayed < available_rows; i++) {
         char full_path[PATH_MAX];
         File fi = {"", "", "", ""};
-        
+
         if (i == 0) {
             // Parent directory
             if (strcmp(path, "/") == 0) {
@@ -210,6 +260,14 @@ void list_directory(WINDOW* win, const char* path, int* sel, int* file_count)
             wattroff(win, A_REVERSE);
         }
         y++;
+        displayed++;
+    }
+
+    // Display bottom scroll indicator if needed (after file listing)
+    if (needs_bottom_indicator) {
+        wattron(win, A_BOLD);
+        mvwprintw(win, y, x, "%-*s", PRIMARY_W, "More...");
+        wattroff(win, A_BOLD);
     }
     
     closedir(dir);
@@ -232,6 +290,7 @@ void change_directory(char* path, int* sel)
         }
         
         *sel = 0;  // Reset selection
+        scroll_offset = 0;
         return;
     }
     
@@ -251,8 +310,13 @@ void change_directory(char* path, int* sel)
         if (count == ((*sel) - 1)) {
             // Check if it's a directory
             char full_path[PATH_MAX];
-            snprintf(full_path, PATH_MAX, "%s/%s", path, entry->d_name);
-            
+
+            // Check if the path already ends with a slash before adding another
+            if (path[strlen(path) - 1] == '/') {
+                snprintf(full_path, PATH_MAX, "%s%s", path, entry->d_name);
+            } else {
+                snprintf(full_path, PATH_MAX, "%s/%s", path, entry->d_name);
+            }
             DIR *test_dir = opendir(full_path);
             if (test_dir != NULL) {
                 closedir(test_dir);
@@ -278,6 +342,7 @@ int main() {
 
     WINDOW* win;
     
+    scroll_offset = 0;
     home = getenv("HOME");
     strncpy(current_path, home, PATH_MAX - 1);
     current_path[PATH_MAX - 1] = '\0';
@@ -285,8 +350,8 @@ int main() {
     ncurses_init();
     getmaxyx(stdscr, max_y, max_x);
 
-    win_height = max_y - 5;
-    win_width = max_x - 5;
+    win_height = max_y - 2;
+    win_width = max_x - 2;
     win_start_y = (max_y - win_height) / 2;  // Center vertically
     win_start_x = (max_x - win_width) / 2;   // Center horizontally
     win = newwin(win_height, win_width, win_start_y, win_start_x);
@@ -298,6 +363,7 @@ int main() {
     int sel = 0;
     int fc = 0;
     unsigned int ch;
+    int available_rows;
 
     list_directory(win, current_path, &sel, &fc);
     display_footer(max_y - 1, 2);
@@ -311,12 +377,19 @@ int main() {
                     sel--;
                 else
                     sel = fc - 1;
+                
+                if (sel < scroll_offset)
+                    scroll_offset = sel;
                 break;
             case KEY_DOWN:
                 if (sel < fc - 1)
                     sel++;
                 else
                     sel = 0;
+
+                available_rows = win_height - 5; 
+                if (sel >= scroll_offset + available_rows)
+                    scroll_offset = sel - available_rows + 1;
                 break;
             case 'q':
                 running = 0;
